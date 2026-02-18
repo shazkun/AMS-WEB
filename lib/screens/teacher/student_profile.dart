@@ -1,22 +1,16 @@
-// screens/student_profile.dart
 import 'dart:convert';
-import 'package:attsys/providers/auth_provider.dart';
+import 'package:attsys/config/api_config.dart';
 import 'package:attsys/widgets/logout.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// screens/student_profile_screen.dart
-// (only showing the changed parts – merge with your existing file)
-
-// screens/student_profile_screen.dart
-
 class StudentProfileScreen extends StatefulWidget {
   final String? lrn; // null = own profile, non-null = viewing specific student
+  final String? classId; // Required for QR generation
 
-  const StudentProfileScreen({super.key, this.lrn});
+  const StudentProfileScreen({super.key, this.lrn, this.classId});
 
   @override
   State<StudentProfileScreen> createState() => _StudentProfileScreenState();
@@ -52,16 +46,15 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
       String url;
       if (widget.lrn != null) {
         // Teacher viewing specific student
-        url = 'http://localhost:3000/api/teacher/students/${widget.lrn}';
+        url = ApiConfig.teacherStudents(widget.lrn!);
       } else {
         // Own profile
-        url = 'http://localhost:3000/api/student/profile';
+        url = ApiConfig.studentProfile;
       }
 
-      final res = await http.get(
-        Uri.parse(url),
-        headers: {'Authorization': 'Bearer $token'},
-      );
+      final res = await http
+          .get(Uri.parse(url), headers: ApiConfig.headers(token))
+          .timeout(ApiConfig.timeout);
 
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
@@ -69,7 +62,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
           profile = data;
           isLoading = false;
         });
-        _generateQrPayload(); // Generate QR in both cases now
+        _generateQrPayload();
       } else {
         setState(() {
           errorMessage =
@@ -91,11 +84,12 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
       return;
     }
 
-    // Use a placeholder class ID (you can make this dynamic later)
-    final classId = "1"; // ← or pass real classId from constructor if needed
+    // ✅ FIXED: Generate correct payload format
+    final classId = widget.classId ?? "1"; // Use provided or default
+    final lrn = profile!['lrn'];
 
     setState(() {
-      qrPayload = "${profile!['surname']}|${profile!['lrn']}|$classId";
+      qrPayload = 'lrn:$lrn|class:$classId';
       debugPrint("QR generated: $qrPayload");
     });
   }
@@ -106,155 +100,319 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
     final title = isOwnProfile ? 'My Profile' : 'Student Profile';
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(title),
-        actions: const [LogoutButton()], // if you have this widget
-      ),
+      appBar: AppBar(title: Text(title)),
       body:
           isLoading
               ? const Center(child: CircularProgressIndicator())
               : errorMessage != null
               ? Center(
-                child: Text(
-                  errorMessage!,
-                  style: const TextStyle(color: Colors.red),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      size: 64,
+                      color: Colors.red.shade300,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      errorMessage!,
+                      style: TextStyle(color: Colors.red.shade700),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: _loadProfile,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                    ),
+                  ],
                 ),
               )
               : profile == null
               ? const Center(child: Text('No profile data'))
               : SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    CircleAvatar(
-                      radius: 60,
-                      backgroundColor: Colors.blue[100],
-                      child: Text(
-                        profile!['firstname'][0] + profile!['surname'][0],
-                        style: const TextStyle(
-                          fontSize: 48,
-                          color: Colors.blue,
+                    // Profile Header
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(32),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Colors.blue.shade700, Colors.blue.shade500],
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Hero(
+                            tag: 'avatar_${profile!['lrn']}',
+                            child: CircleAvatar(
+                              radius: 60,
+                              backgroundColor: Colors.white,
+                              child: Text(
+                                '${profile!['firstname'][0]}${profile!['surname'][0]}'
+                                    .toUpperCase(),
+                                style: TextStyle(
+                                  fontSize: 48,
+                                  color: Colors.blue.shade700,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            '${profile!['firstname']} ${profile!['suffix'] ?? ''} ${profile!['surname']}'
+                                .trim(),
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              'LRN: ${profile!['lrn']}',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                color: Colors.white,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Profile Details Card
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Card(
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Personal Information',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              _buildInfoRow(
+                                Icons.cake,
+                                'Birthday',
+                                profile!['birthday'] ?? '—',
+                              ),
+                              const Divider(height: 24),
+                              _buildInfoRow(
+                                Icons.badge,
+                                'Full Name',
+                                '${profile!['firstname']} ${profile!['suffix'] ?? ''} ${profile!['surname']}'
+                                    .trim(),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
-                    Text(
-                      '${profile!['firstname']} ${profile!['suffix'] ?? ''} ${profile!['surname']}'
-                          .trim(),
-                      style: const TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'LRN: ${profile!['lrn']}',
-                      style: const TextStyle(fontSize: 18),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Birthday: ${profile!['birthday'] ?? '—'}',
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                    const SizedBox(height: 40),
 
-                    // QR Section – always show when profile is loaded
-                    Card(
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          children: [
-                            Text(
-                              widget.lrn == null
-                                  ? 'Your Attendance QR Code'
-                                  : 'Student QR Code',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-
-                            if (isLoading)
-                              const SizedBox(
-                                height: 260,
-                                child: Center(
-                                  child: CircularProgressIndicator(),
-                                ),
-                              )
-                            else if (errorMessage != null)
-                              SizedBox(
-                                height: 260,
-                                child: Center(
-                                  child: Text(
-                                    'Cannot load profile\n$errorMessage',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(color: Colors.red[700]),
-                                  ),
-                                ),
-                              )
-                            else if (qrPayload == null)
-                              SizedBox(
-                                height: 260,
-                                child: Center(
-                                  child: Text(
-                                    'QR not ready',
-                                    style: TextStyle(color: Colors.orange[800]),
-                                  ),
-                                ),
-                              )
-                            else
-                              Stack(
-                                alignment: Alignment.center,
+                    // QR Code Card
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Card(
+                        elevation: 4,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  // QR code
-                                  QrImageView(
+                                  Icon(
+                                    Icons.qr_code_2,
+                                    color: Colors.blue.shade700,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    widget.lrn == null
+                                        ? 'Your Attendance QR Code'
+                                        : 'Student QR Code',
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 20),
+
+                              if (qrPayload == null)
+                                SizedBox(
+                                  height: 260,
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.warning_amber_rounded,
+                                          size: 48,
+                                          color: Colors.orange.shade300,
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'QR Code Not Available',
+                                          style: TextStyle(
+                                            color: Colors.orange.shade800,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        const Text(
+                                          'Class ID required',
+                                          style: TextStyle(
+                                            color: Colors.grey,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              else
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: Colors.grey.shade300,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: QrImageView(
                                     data: qrPayload!,
                                     version: QrVersions.auto,
                                     size: 240,
                                     backgroundColor: Colors.white,
-                                    eyeStyle: const QrEyeStyle(
+                                    eyeStyle: QrEyeStyle(
                                       eyeShape: QrEyeShape.square,
-                                      color: Colors.black,
+                                      color: Colors.blue.shade900,
                                     ),
-                                    dataModuleStyle: const QrDataModuleStyle(
+                                    dataModuleStyle: QrDataModuleStyle(
                                       dataModuleShape: QrDataModuleShape.circle,
-                                      color: Colors.black,
+                                      color: Colors.blue.shade900,
                                     ),
                                   ),
+                                ),
 
-                                  // Overlay: Firstname Surname + LRN
-                                ],
+                              const SizedBox(height: 16),
+
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.info_outline,
+                                      size: 20,
+                                      color: Colors.blue.shade700,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        widget.lrn == null
+                                            ? 'Show this QR code to your teacher to mark your attendance'
+                                            : 'Scan this QR code to mark student attendance',
+                                        style: TextStyle(
+                                          color: Colors.blue.shade900,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
 
-                            const SizedBox(height: 16),
-                            Text(
-                              widget.lrn == null
-                                  ? 'Show this to your teacher to mark attendance'
-                                  : 'Scan this to mark attendance',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Colors.grey,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
+                              if (qrPayload != null) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Format: $qrPayload',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.grey.shade600,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
+
+                    const SizedBox(height: 32),
                   ],
                 ),
               ),
     );
   }
+
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 24, color: Colors.blue.shade700),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
-
-  // In build method – make the QR section show useful feedback
-
- 
